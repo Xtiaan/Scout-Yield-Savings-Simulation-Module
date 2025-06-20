@@ -1,0 +1,83 @@
+import pandas as pd
+from datetime import datetime
+
+# --- Input: Time Series Data ---
+data = [
+    {"timestamp": "00:00", "pv_percent": 0.00, "consumption_kw": 25.54436875},
+    {"timestamp": "10:00", "pv_percent": 0.60, "consumption_kw": 142.7257933},
+    {"timestamp": "12:00", "pv_percent": 0.80, "consumption_kw": 150.7442835},
+    {"timestamp": "15:00", "pv_percent": 0.20, "consumption_kw": 141.5255767}
+]
+
+# --- System Parameters ---
+battery_nominal_kwh = 290.816
+battery_dod = 0.80
+battery_loss_factor = 0.15  # Not applied here
+pv_kw = 320
+pv_loss_factor = 0.75
+
+# --- Derived Limits ---
+battery_max_kwh = battery_nominal_kwh * battery_dod
+battery_min_kwh = 0.0
+soc = battery_max_kwh  # Initial SOC
+
+# --- Convert timestamps to datetime objects ---
+for row in data:
+    row["datetime"] = datetime.strptime(row["timestamp"], "%H:%M")
+
+# --- Run Simulation ---
+results = []
+for i, entry in enumerate(data):
+    if i == 0:
+        duration_minutes = 1
+    else:
+        delta = (entry["datetime"] - data[i - 1]["datetime"]).total_seconds() / 60
+        duration_minutes = delta if delta > 0 else 1
+
+    consumption_kwh = entry["consumption_kw"] * (duration_minutes / 60)
+    pv_kw_actual = entry["pv_percent"] * pv_kw * pv_loss_factor
+    pv_kwh = pv_kw_actual * (duration_minutes / 60)
+
+    if pv_kwh >= consumption_kwh:
+        excess_pv = pv_kwh - consumption_kwh
+        grid_after_pv = 0
+    else:
+        excess_pv = 0
+        grid_after_pv = consumption_kwh - pv_kwh
+
+    if excess_pv == 0:
+        available_discharge = soc - battery_min_kwh
+        discharge = min(available_discharge, grid_after_pv)
+    else:
+        discharge = 0
+
+    if excess_pv > 0:
+        available_charge = battery_max_kwh - soc
+        charge = min(available_charge, excess_pv)
+    else:
+        charge = 0
+
+    soc = soc - discharge + charge
+    grid_kwh = grid_after_pv - discharge
+
+    # Final savings calculation
+    savings_kwh = consumption_kwh - grid_kwh
+
+    # Store result
+    results.append({
+        "Time": entry["timestamp"],
+        "Duration (min)": duration_minutes,
+        "Consumption (kWh)": round(consumption_kwh, 4),
+        "PV (kWh)": round(pv_kwh, 4),
+        "Excess PV (kWh)": round(excess_pv, 4),
+        "Grid After PV (kWh)": round(grid_after_pv, 4),
+        "Battery Discharge (kWh)": round(discharge, 4),
+        "Battery Charge (kWh)": round(charge, 4),
+        "Battery SOC (kWh)": round(soc, 4),
+        "Grid Used (kWh)": round(grid_kwh, 4),
+        "Savings (kWh)": round(savings_kwh, 4)
+    })
+
+# --- Output ---
+df = pd.DataFrame(results)
+print(df.to_string(index=False))
